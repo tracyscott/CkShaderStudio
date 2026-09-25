@@ -94,6 +94,7 @@ public class MainFrame extends JFrame {
   private final JCheckBox gpuBox = new JCheckBox("OpenGL");
   private final JCheckBox glowBox = new JCheckBox("Glow");
   private boolean gpuErrorShown = false;
+  private volatile double frameMs = 0;
 
   // State (touched on the Swing thread unless noted)
   private Session session = new Session();
@@ -381,7 +382,10 @@ public class MainFrame extends JFrame {
     }
     restoreLastSession();
     refreshModels();
-    new Timer(33, e -> tick()).start();
+    // ~60 fps; a frame is skipped while the previous one is still being rendered.
+    Timer frameTimer = new Timer(15, e -> tick());
+    frameTimer.setCoalesce(true);
+    frameTimer.start();
   }
 
   private void restoreLastSession() {
@@ -571,7 +575,9 @@ public class MainFrame extends JFrame {
     if (view != null) view.alphaThreshold = params.alphaThreshold;
     frameThread.submit(() -> {
       try {
+        long t0 = System.nanoTime();
         GLRunner.Frame frame = runner.frame(p, time, values, view);
+        frameMs = (System.nanoTime() - t0) / 1e6;
         ui(() -> {
           preview.setFrame(p == null ? null : frame.rgb, frame.image);
           if (view != null && frame.image == null && !runner.hasCloudRenderer() && !gpuErrorShown) {
@@ -596,7 +602,7 @@ public class MainFrame extends JFrame {
     frames++;
     long now = System.nanoTime();
     if (now - fpsStart > 1_000_000_000L) {
-      fpsText = String.format(Locale.US, "%.0f fps", frames / ((now - fpsStart) / 1e9));
+      fpsText = String.format(Locale.US, "%.0f fps   %.1f ms/frame", frames / ((now - fpsStart) / 1e9), frameMs);
       frames = 0;
       fpsStart = now;
     }

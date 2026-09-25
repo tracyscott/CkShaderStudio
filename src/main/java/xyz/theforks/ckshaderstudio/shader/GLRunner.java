@@ -277,12 +277,12 @@ public class GLRunner {
    */
   public float[] run(Program p, float time, Map<String, Float> params) throws Exception {
     return call(() -> {
-      return runOnThread(p, time, params);
+      return runOnThread(p, time, params, true);
     });
   }
 
   /** Must be called on the GL thread. */
-  private float[] runOnThread(Program p, float time, Map<String, Float> params) {
+  private float[] runOnThread(Program p, float time, Map<String, Float> params, boolean readBack) {
       float[] out = new float[pointCount * 3];
       if (p == null || pointCount == 0) return out;
       gl.glBindVertexArray(runVao[0]);
@@ -320,6 +320,13 @@ public class GLRunner {
       gl.glDrawArrays(GL_POINTS, 0, pointCount);
       gl.glEndTransformFeedback();
       gl.glFlush();
+      if (!readBack) {
+        // The GPU preview reads the colors straight from the buffer; skip the CPU copy.
+        gl.glUseProgram(0);
+        gl.glDisable(GL_RASTERIZER_DISCARD);
+        gl.glBindVertexArray(0);
+        return null;
+      }
       gl.glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, (long) out.length * Float.BYTES, tfbBuffer);
       gl.glUseProgram(0);
       gl.glDisable(GL_RASTERIZER_DISCARD);
@@ -352,7 +359,8 @@ public class GLRunner {
    */
   public Frame frame(Program p, float time, Map<String, Float> params, CloudRenderer.View view) throws Exception {
     return call(() -> {
-      float[] rgb = runOnThread(p, time, params);
+      boolean gpu = cloud != null && view != null && view.width > 0 && view.height > 0;
+      float[] rgb = runOnThread(p, time, params, !gpu);
       java.awt.image.BufferedImage img = null;
       if (cloud != null && view != null && view.width > 0 && view.height > 0) {
         try {
