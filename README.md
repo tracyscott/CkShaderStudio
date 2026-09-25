@@ -37,7 +37,7 @@ also build and run it yourself:
 
 ```sh
 mvn package
-java -jar target/ckshaderstudio-0.1.0-jar-with-dependencies.jar
+java -jar target/ckshaderstudio-0.0.2-jar-with-dependencies.jar
 ```
 
 The build uses `com.heronarts:lx:1.1.0` (the LX library that ships with Chromatik 1.1) and JOGL

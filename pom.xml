@@ -4,7 +4,7 @@
 
     <groupId>xyz.theforks</groupId>
     <artifactId>ckshaderstudio</artifactId>
-    <version>0.1.0</version>
+    <version>0.0.2</version>
     <packaging>jar</packaging>
     <name>CkShaderStudio</name>
     <description>AI-assisted editor with live LED preview for CkVShader vertex shaders</description>
