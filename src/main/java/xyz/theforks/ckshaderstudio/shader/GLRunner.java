@@ -114,6 +114,20 @@ public class GLRunner {
   private FloatBuffer vertexBuffer;
   private FloatBuffer tfbBuffer;
   private final byte[] audioBytes = new byte[AUDIO_TEX_WIDTH * AUDIO_TEX_HEIGHT];
+  private final int[] runVao = new int[1];
+  private CloudRenderer cloud;
+  private String cloudError;
+
+  /** One preview frame: the shader output and, if the GPU preview works, the rendered picture. */
+  static public class Frame {
+    public final float[] rgb;
+    public final java.awt.image.BufferedImage image;
+
+    Frame(float[] rgb, java.awt.image.BufferedImage image) {
+      this.rgb = rgb;
+      this.image = image;
+    }
+  }
 
   /** Creates the context.  Throws if OpenGL 3 is not available. */
   public void init() throws Exception {
@@ -138,6 +152,16 @@ public class GLRunner {
       gl = drawable.getGL().getGL3();
       glInfo = gl.glGetString(GL.GL_RENDERER) + " / OpenGL " + gl.glGetString(GL.GL_VERSION);
       gl.glGenBuffers(2, buffers, 0);
+      // Core profiles need a bound vertex array object for drawing; use our own rather than
+      // relying on a default one.
+      gl.glGenVertexArrays(1, runVao, 0);
+      try {
+        cloud = new CloudRenderer(gl);
+        cloud.init();
+      } catch (Exception ex) {
+        cloud = null;
+        cloudError = ex.getMessage();
+      }
       gl.glGenTextures(1, audioTex, 0);
       gl.glBindTexture(GL_TEXTURE_2D, audioTex[0]);
       gl.glTexParameteri(GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
@@ -253,8 +277,15 @@ public class GLRunner {
    */
   public float[] run(Program p, float time, Map<String, Float> params) throws Exception {
     return call(() -> {
+      return runOnThread(p, time, params);
+    });
+  }
+
+  /** Must be called on the GL thread. */
+  private float[] runOnThread(Program p, float time, Map<String, Float> params) {
       float[] out = new float[pointCount * 3];
       if (p == null || pointCount == 0) return out;
+      gl.glBindVertexArray(runVao[0]);
       gl.glBindBuffer(GL_ARRAY_BUFFER, buffers[0]);
       gl.glBufferData(GL_ARRAY_BUFFER, (long) vertexBuffer.capacity() * Float.BYTES, vertexBuffer, GL_STATIC_DRAW);
       int inputAttrib = gl.glGetAttribLocation(p.id, "position");
@@ -294,8 +325,78 @@ public class GLRunner {
       gl.glDisable(GL_RASTERIZER_DISCARD);
       tfbBuffer.rewind();
       tfbBuffer.get(out, 0, out.length);
+      gl.glBindVertexArray(0);
       return out;
+  }
+
+  /** Whether frames can be rendered on the GPU; if not, {@link #cloudError()} says why. */
+  public boolean hasCloudRenderer() {
+    return cloud != null;
+  }
+
+  public String cloudError() {
+    return cloudError;
+  }
+
+  /** Display positions for the GPU preview: the view's LEDs and the context points around them. */
+  public void setDisplayPoints(float[] xyz, float[] otherXyz) throws Exception {
+    call(() -> {
+      if (cloud != null) cloud.setPositions(xyz, otherXyz);
+      return null;
     });
+  }
+
+  /**
+   * Runs the shader (if any) and renders the point cloud with its output.  If GPU rendering fails
+   * the frame has no image and the caller should draw the colors itself.
+   */
+  public Frame frame(Program p, float time, Map<String, Float> params, CloudRenderer.View view) throws Exception {
+    return call(() -> {
+      float[] rgb = runOnThread(p, time, params);
+      java.awt.image.BufferedImage img = null;
+      if (cloud != null && view != null && view.width > 0 && view.height > 0) {
+        try {
+          view.hasColors = p != null;
+          img = cloud.render(view, buffers[1], p == null ? 0 : pointCount);
+        } catch (Exception ex) {
+          cloudError = ex.getMessage();
+          cloud = null;
+          gl.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0);
+        }
+      }
+      return new Frame(rgb, img);
+    });
+  }
+
+  /** Compiles and links a vertex + fragment program, throwing with the log on failure.  GL thread only. */
+  static int buildProgram(GL3 gl, String vert, String frag) {
+    int program = gl.glCreateProgram();
+    int[] shaders = { gl.glCreateShader(GL_VERTEX_SHADER), gl.glCreateShader(com.jogamp.opengl.GL2ES2.GL_FRAGMENT_SHADER) };
+    String[] sources = { vert, frag };
+    for (int i = 0; i < 2; i++) {
+      gl.glShaderSource(shaders[i], 1, new String[] { sources[i] }, null);
+      gl.glCompileShader(shaders[i]);
+      int[] ok = new int[1];
+      gl.glGetShaderiv(shaders[i], GL_COMPILE_STATUS, ok, 0);
+      if (ok[0] != GL.GL_TRUE) {
+        byte[] log = new byte[4096];
+        int[] len = new int[1];
+        gl.glGetShaderInfoLog(shaders[i], log.length, len, 0, log, 0);
+        throw new IllegalStateException("Preview shader failed: " + new String(log, 0, len[0]));
+      }
+      gl.glAttachShader(program, shaders[i]);
+    }
+    gl.glLinkProgram(program);
+    int[] ok = new int[1];
+    gl.glGetProgramiv(program, GL_LINK_STATUS, ok, 0);
+    for (int sh : shaders) gl.glDeleteShader(sh);
+    if (ok[0] != GL.GL_TRUE) {
+      byte[] log = new byte[4096];
+      int[] len = new int[1];
+      gl.glGetProgramInfoLog(program, log.length, len, 0, log, 0);
+      throw new IllegalStateException("Preview program failed to link: " + new String(log, 0, len[0]));
+    }
+    return program;
   }
 
   public void dispose() {

@@ -29,6 +29,9 @@ public class Settings {
   public int maxFixAttempts = 2;
   public boolean attachPreview = false;
   public float pointSize = 3f;
+  /** Render the preview as an OpenGL point cloud (off: software renderer). */
+  public boolean gpuPreview = true;
+  public boolean glow = true;
   /** Per model file notes about the installation, included in the system prompt. */
   public Map<String, String> modelNotes = new HashMap<>();
 

@@ -11,7 +11,7 @@ the CkVShader and CkVShaderTex patterns in [Chromatik](https://chromatik.co).
 
 - **Chat to iterate** with any model on [OpenRouter](https://openrouter.ai). Each reply is compiled and
   previewed; compile errors are sent back to the model automatically.
-- **Faithful preview**: shaders run the same way CkVShader runs them (GLSL 330 vertex shaders with
+- **Faithful preview**, drawn on the GPU as an OpenGL point cloud with LED glow: shaders run the same way CkVShader runs them (GLSL 330 vertex shaders with
   transform feedback, `#include <file.vti>`, ISF sliders, alpha threshold, textures and audio in Tex mode).
 - **Your real model**: open any Chromatik `.lxm` file and preview per view, or use a built-in panel,
   cylinder or cube.

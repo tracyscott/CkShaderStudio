@@ -30,6 +30,15 @@ The preview must behave like `xyz.theforks.ckvshader.patterns.CkVShader` / `CkVS
 - `model/ModelLoader`: headless `LX` with `mediaPath` = Chromatik folder, `structure.importModel(.lxm)`,
   views via `LXView.create(..., RELATIVE, GLOBAL)`.
 
+## Preview rendering
+
+`shader/CloudRenderer` draws the LEDs as an OpenGL point cloud (round sprites, depth test, additive
+glow pass) into a 4x multisampled offscreen framebuffer on the GLRunner thread, using the
+transform-feedback buffer directly as the color attribute, then reads the image back for
+`ui/PreviewPanel` to display. The camera matrix comes from `PreviewPanel.cloudView()` and matches the
+software projection used as a fallback (toolbar "OpenGL" toggle, or automatically if the GPU path fails).
+Both GLRunner programs bind their own VAO, as core profiles require.
+
 ## UI theme
 
 `ui/Theme` installs a dark Nimbus palette and holds the colors used by custom-painted components and the

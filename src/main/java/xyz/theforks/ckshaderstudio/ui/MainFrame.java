@@ -8,6 +8,7 @@ import xyz.theforks.ckshaderstudio.ai.ShaderPrompt;
 import xyz.theforks.ckshaderstudio.model.ModelLoader;
 import xyz.theforks.ckshaderstudio.model.ModelSummary;
 import xyz.theforks.ckshaderstudio.shader.AudioSim;
+import xyz.theforks.ckshaderstudio.shader.CloudRenderer;
 import xyz.theforks.ckshaderstudio.shader.GLRunner;
 import xyz.theforks.ckshaderstudio.shader.IsfHeader;
 import xyz.theforks.ckshaderstudio.shader.ShaderCheck;
@@ -90,6 +91,9 @@ public class MainFrame extends JFrame {
   private final JButton playButton = new JButton("Pause");
   private final JCheckBox autoSave = new JCheckBox("Auto-save");
   private final JLabel savedLabel = new JLabel(" ");
+  private final JCheckBox gpuBox = new JCheckBox("OpenGL");
+  private final JCheckBox glowBox = new JCheckBox("Glow");
+  private boolean gpuErrorShown = false;
 
   // State (touched on the Swing thread unless noted)
   private Session session = new Session();
@@ -165,6 +169,11 @@ public class MainFrame extends JFrame {
     pointSize.setToolTipText("LED dot size");
     bar.add(new JLabel("  Dot size "));
     bar.add(pointSize);
+    bar.addSeparator();
+    gpuBox.setToolTipText("Render the preview as an OpenGL point cloud (off: software renderer)");
+    glowBox.setToolTipText("Soft light halo around lit LEDs (OpenGL preview only)");
+    bar.add(gpuBox);
+    bar.add(glowBox);
     ToolRow fileBar = new ToolRow();
     fileBar.add(new JLabel(" Shader name "));
     nameField.setMinimumSize(new Dimension(160, 26));
@@ -203,6 +212,22 @@ public class MainFrame extends JFrame {
       preview.setPointSize(settings.pointSize);
     });
     settingsButton.addActionListener(e -> showSettings());
+    gpuBox.setSelected(settings.gpuPreview);
+    glowBox.setSelected(settings.glow);
+    preview.setGpuEnabled(settings.gpuPreview);
+    preview.setGlow(settings.glow ? 0.45f : 0f);
+    glowBox.setEnabled(settings.gpuPreview);
+    gpuBox.addActionListener(e -> {
+      settings.gpuPreview = gpuBox.isSelected();
+      preview.setGpuEnabled(settings.gpuPreview);
+      glowBox.setEnabled(settings.gpuPreview);
+      settings.save();
+    });
+    glowBox.addActionListener(e -> {
+      settings.glow = glowBox.isSelected();
+      preview.setGlow(settings.glow ? 0.45f : 0f);
+      settings.save();
+    });
     preview.setPointSize(settings.pointSize);
 
     notes.setLineWrap(true);
@@ -472,6 +497,7 @@ public class MainFrame extends JFrame {
       try {
         if (!glReady) return;
         runner.setPoints(vp.xyzn);
+        runner.setDisplayPoints(vp.xyz, vp.otherXyz);
         ui(() -> status(vp.size() + " LEDs in view. " + (program == null ? "Describe a shader to get started." : "")));
       } catch (Exception ex) {
         ui(() -> status("GL error: " + ex.getMessage()));
@@ -532,19 +558,31 @@ public class MainFrame extends JFrame {
     lastTick = now;
     if (playing) elapsed += dt;
     GLRunner.Program p = program;
-    if (p == null || !glReady || viewPoints == null) return;
+    if (!glReady || viewPoints == null) return;
+    // Without a shader there is nothing to animate unless the GPU view needs redrawing (camera moves).
+    CloudRenderer.View view = preview.cloudView();
+    if (p == null && view == null) return;
     if (!framePending.compareAndSet(false, true)) return;
     float time = (float) (params.speed * elapsed);
     Map<String, Float> values = params.values();
     float[] bands = audio.bands((now - startNanos) / 1e9);
     runner.setAudioBands(bands);
+    preview.setAlphaThreshold(params.alphaThreshold);
+    if (view != null) view.alphaThreshold = params.alphaThreshold;
     frameThread.submit(() -> {
       try {
-        float[] rgb = runner.run(p, time, values);
+        GLRunner.Frame frame = runner.frame(p, time, values, view);
         ui(() -> {
-          preview.setAlphaThreshold(params.alphaThreshold);
-          preview.setColors(rgb);
-          countFrame(time);
+          preview.setFrame(p == null ? null : frame.rgb, frame.image);
+          if (view != null && frame.image == null && !runner.hasCloudRenderer() && !gpuErrorShown) {
+            gpuErrorShown = true;
+            gpuBox.setSelected(false);
+            gpuBox.setEnabled(false);
+            glowBox.setEnabled(false);
+            preview.setGpuEnabled(false);
+            status("OpenGL preview unavailable (" + runner.cloudError() + "); using the software preview.");
+          }
+          if (p != null) countFrame(time);
         });
       } catch (Exception ex) {
         ui(() -> status("Preview error: " + ex.getMessage()));

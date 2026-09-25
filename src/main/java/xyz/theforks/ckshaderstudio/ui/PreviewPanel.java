@@ -2,6 +2,7 @@ package xyz.theforks.ckshaderstudio.ui;
 
 import heronarts.lx.color.LXColor;
 import xyz.theforks.ckshaderstudio.model.ModelLoader;
+import xyz.theforks.ckshaderstudio.shader.CloudRenderer;
 
 import javax.imageio.ImageIO;
 import javax.swing.JPanel;
@@ -48,6 +49,11 @@ public class PreviewPanel extends JPanel {
   private float[] depth = new float[0];
   private float[] sx = new float[0], sy = new float[0];
   private boolean orderDirty = true;
+
+  // GPU preview: the latest frame rendered by the OpenGL point-cloud renderer, if available.
+  private BufferedImage gpuImage;
+  private boolean gpuEnabled = true;
+  private float glow = 0.7f;
 
   public PreviewPanel() {
     setPreferredSize(new Dimension(640, 480));
@@ -114,6 +120,7 @@ public class PreviewPanel extends JPanel {
   public void setPoints(ModelLoader.ViewPoints vp) {
     this.points = vp;
     this.rgb = null;
+    this.gpuImage = null;
     int n = vp == null ? 0 : vp.size();
     order = new Integer[n];
     for (int i = 0; i < n; i++) order[i] = i;
@@ -169,16 +176,105 @@ public class PreviewPanel extends JPanel {
     this.overlay = s == null ? "" : s;
   }
 
+  /** Turns the OpenGL point-cloud preview on or off (off uses the software renderer). */
+  public void setGpuEnabled(boolean on) {
+    gpuEnabled = on;
+    if (!on) gpuImage = null;
+    repaint();
+  }
+
+  public boolean isGpuEnabled() {
+    return gpuEnabled;
+  }
+
+  public void setGlow(float glow) {
+    this.glow = glow;
+  }
+
+  /** Shows a frame from the GPU renderer, or falls back to drawing the colors in software. */
+  public void setFrame(float[] rgb, BufferedImage gpu) {
+    this.rgb = rgb;
+    this.gpuImage = gpuEnabled ? gpu : null;
+    repaint();
+  }
+
+  /** Pixel scale of the screen (2 on Retina displays). */
+  private double pixelScale() {
+    try {
+      return getGraphicsConfiguration().getDefaultTransform().getScaleX();
+    } catch (Exception ex) {
+      return 1.0;
+    }
+  }
+
+  /**
+   * Camera and style for the GPU renderer, matching the software projection exactly (same
+   * orbit, zoom and pan), at the screen's pixel density.  Call on the Swing thread.
+   */
+  public CloudRenderer.View cloudView() {
+    if (!gpuEnabled || points == null || getWidth() < 2 || getHeight() < 2) return null;
+    double ps = pixelScale();
+    // Keep readback cost bounded on very large Retina windows.
+    double maxPixels = 3_000_000;
+    if (getWidth() * ps * getHeight() * ps > maxPixels) ps = Math.sqrt(maxPixels / ((double) getWidth() * getHeight()));
+    int w = (int) Math.round(getWidth() * ps), h = (int) Math.round(getHeight() * ps);
+    double scale = 0.45 * Math.min(w, h) / radius * zoom;
+    double ox = w / 2.0 + panX * ps, oy = h / 2.0 + panY * ps;
+    double cyaw = Math.cos(yaw), syaw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    double depthRange = radius * 2.2;
+    // The projection is affine, so build the matrix from where the origin and unit axes land.
+    double[] o = project(0, 0, 0, w, h, scale, ox, oy, cyaw, syaw, cp, sp, depthRange);
+    double[][] axes = {
+      project(1, 0, 0, w, h, scale, ox, oy, cyaw, syaw, cp, sp, depthRange),
+      project(0, 1, 0, w, h, scale, ox, oy, cyaw, syaw, cp, sp, depthRange),
+      project(0, 0, 1, w, h, scale, ox, oy, cyaw, syaw, cp, sp, depthRange) };
+    float[] m = new float[16];
+    for (int c = 0; c < 3; c++) {
+      for (int r = 0; r < 3; r++) m[c * 4 + r] = (float) (axes[c][r] - o[r]);
+    }
+    m[12] = (float) o[0];
+    m[13] = (float) o[1];
+    m[14] = (float) o[2];
+    m[15] = 1f;
+    CloudRenderer.View v = new CloudRenderer.View();
+    v.width = w;
+    v.height = h;
+    v.mvp = m;
+    v.pointSize = (float) (pointSize * ps);
+    v.alphaThreshold = alphaThreshold;
+    v.glow = glow;
+    return v;
+  }
+
+  /** Model point to clip space; y is flipped so glReadPixels rows come out top-down. */
+  private double[] project(double px, double py, double pz, int w, int h, double scale, double ox, double oy,
+                           double cyaw, double syaw, double cp, double sp, double depthRange) {
+    double x = px - cx, y = py - cy, z = pz - cz;
+    double x1 = x * cyaw - z * syaw, z1 = x * syaw + z * cyaw;
+    double y1 = y * cp - z1 * sp;
+    double z2 = y * sp + z1 * cp;
+    double sx = ox + x1 * scale, sy = oy - y1 * scale;
+    double ndcX = sx / w * 2 - 1;
+    double ndcYImage = 1 - sy / h * 2;
+    return new double[] { ndcX, -ndcYImage, z2 / depthRange };
+  }
+
   @Override
   protected void paintComponent(Graphics g) {
     int w = Math.max(1, getWidth()), h = Math.max(1, getHeight());
-    if (image == null || image.getWidth() != w || image.getHeight() != h) {
-      image = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-      raster = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-    }
-    render(w, h);
-    g.drawImage(image, 0, 0, null);
     Graphics2D g2 = (Graphics2D) g;
+    BufferedImage gpu = gpuImage;
+    if (gpu != null && gpuEnabled) {
+      g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+      g2.drawImage(gpu, 0, 0, w, h, null);
+    } else {
+      if (image == null || image.getWidth() != w || image.getHeight() != h) {
+        image = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        raster = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+      }
+      render(w, h);
+      g.drawImage(image, 0, 0, null);
+    }
     g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
     g2.setFont(getFont().deriveFont(Font.PLAIN, 11f));
     g2.setColor(new Color(0x9090a0));
@@ -271,8 +367,8 @@ public class PreviewPanel extends JPanel {
 
   /** PNG snapshot of the current view as a data URL, scaled to at most maxSize pixels. */
   public String snapshotDataUrl(int maxSize) {
-    if (image == null) return null;
-    BufferedImage src = image;
+    BufferedImage src = gpuImage != null ? gpuImage : image;
+    if (src == null) return null;
     double s = Math.min(1.0, maxSize / (double) Math.max(src.getWidth(), src.getHeight()));
     int w = Math.max(1, (int) (src.getWidth() * s)), h = Math.max(1, (int) (src.getHeight() * s));
     BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
