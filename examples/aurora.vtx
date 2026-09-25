@@ -1,0 +1,48 @@
+/*{
+  "DESCRIPTION": "Aurora helix: glowing ribbons spiral up the tower with drifting noise and sparkles",
+  "CREDIT": "CkShaderStudio",
+  "ISFVSN": "2.0",
+  "CATEGORIES": [ "VERTEX SDF" ],
+  "INPUTS": [
+    { "NAME": "twist", "TYPE": "float", "DEFAULT": 3.2, "MIN": 0.0, "MAX": 4.0 },
+    { "NAME": "ribbons", "TYPE": "float", "DEFAULT": 2.0, "MIN": 1.0, "MAX": 6.0 },
+    { "NAME": "width", "TYPE": "float", "DEFAULT": 0.13, "MIN": 0.05, "MAX": 0.5 },
+    { "NAME": "sparkle", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "pal", "TYPE": "float", "DEFAULT": 5.0, "MIN": 0.0, "MAX": 20.0 }
+  ]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float twist;
+uniform float ribbons;
+uniform float width;
+uniform float sparkle;
+uniform float pal;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <palettes.vti>
+#include <uvwrap.vti>
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+void main() {
+  vec2 uv = uvwrap(position);
+  float n = floor(ribbons + 0.5);
+  // Phase of the helix: angle around the tower plus a twist that climbs with height.
+  float phase = uv.x * n + uv.y * twist - fTime * 0.25;
+  float d = abs(fract(phase) - 0.5);
+  float ribbon = smoothstep(width, 0.0, d);
+  float glow = 0.35 * smoothstep(width * 2.5, 0.0, d);
+  float shimmer = 0.75 + 0.25 * sin(uv.y * 18.0 - fTime * 2.0 + uv.x * 6.2831);
+  vec3 col = paletteN(uv.y * 0.6 + floor(phase) * 0.33 + fTime * 0.05, pal) * (ribbon * shimmer + glow);
+  // Sparse twinkles that drift upward.
+  vec2 cell = floor(vec2(uv.x * 64.0, uv.y * 90.0 - fTime * 6.0));
+  float s = step(0.985, hash(cell)) * (0.5 + 0.5 * sin(fTime * 8.0 + hash(cell + 7.0) * 6.2831));
+  col += vec3(s * sparkle);
+  outColor = clamp(col, 0.0, 1.0);
+}

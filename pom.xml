@@ -1,0 +1,120 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>xyz.theforks</groupId>
+    <artifactId>ckshaderstudio</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+    <name>CkShaderStudio</name>
+    <description>AI-assisted editor with live LED preview for CkVShader vertex shaders</description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <main.class>xyz.theforks.ckshaderstudio.CkShaderStudio</main.class>
+
+        <!-- Same LX and JOGL versions as CkVShader, so models load and shaders compile the same way. -->
+        <lx.version>1.1.0</lx.version>
+        <jogl.version>2.4.0-rc-20230123</jogl.version>
+        <gson.version>2.11.0</gson.version>
+        <maven-compiler-plugin.version>3.8.0</maven-compiler-plugin.version>
+        <maven-assembly-plugin.version>3.1.0</maven-assembly-plugin.version>
+        <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>jogamp-repo</id>
+            <name>jogamp-repo</name>
+            <url>https://jogamp.org/deployment/maven/</url>
+            <layout>default</layout>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- LX is used headless to load .lxm models exactly as Chromatik does. -->
+        <dependency>
+            <groupId>com.heronarts</groupId>
+            <artifactId>lx</artifactId>
+            <version>${lx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>${gson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jogamp.gluegen</groupId>
+            <artifactId>gluegen-rt-main</artifactId>
+            <version>${jogl.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jogamp.jogl</groupId>
+            <artifactId>jogl-all-main</artifactId>
+            <version>${jogl.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Xlint</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>${maven-assembly-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>app-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+                            <archive>
+                                <manifest>
+                                    <mainClass>${main.class}</mainClass>
+                                </manifest>
+                                <manifestEntries>
+                                    <!-- JOGL reaches into AWT internals on newer JDKs. -->
+                                    <Add-Exports>java.base/java.lang java.desktop/sun.awt java.desktop/sun.java2d java.desktop/sun.lwawt java.desktop/sun.lwawt.macosx</Add-Exports>
+                                    <Add-Opens>java.base/java.lang java.desktop/sun.awt java.desktop/sun.java2d</Add-Opens>
+                                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- mvn compile exec:exec runs the app from target/classes without packaging. -->
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec-maven-plugin.version}</version>
+                <configuration>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>--add-exports=java.base/java.lang=ALL-UNNAMED</argument>
+                        <argument>--add-exports=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                        <argument>--add-exports=java.desktop/sun.java2d=ALL-UNNAMED</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${main.class}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
